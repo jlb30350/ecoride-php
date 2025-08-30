@@ -6,7 +6,7 @@ require_once __DIR__ . '/../models/RideModel.php';
 require_login();
 if (current_user_role() !== 'driver') {
   http_response_code(403);
-  exit("Accès conducteur uniquement");
+  exit('Accès conducteur uniquement');
 }
 
 $rm = new RideModel($pdo);
@@ -17,53 +17,59 @@ $ride   = $rideId ? $rm->find($rideId) : null;
 
 if (!$ride || (int)$ride['user_id'] !== (int)current_user_id()) {
   http_response_code(404);
-  exit("Trajet introuvable");
+  exit('Trajet introuvable');
 }
 
-// valeurs par défaut = valeurs existantes
+// valeurs par défaut = existantes
 $error = null;
 $old = [
   'origin'      => (string)$ride['origin'],
   'destination' => (string)$ride['destination'],
-  // si ride_date est DATETIME, on garde juste YYYY-MM-DD pour l’input date
-  'ride_date'   => substr((string)$ride['ride_date'], 0, 10),
+  'ride_date'   => (string)$ride['ride_date'], // ex: "2025-09-01 03:39:00"
   'seats'       => (string)$ride['seats'],
   'price'       => (string)$ride['price'],
 ];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-  // récupère ce que l’utilisateur a saisi
   $old['origin']      = trim($_POST['origin']      ?? $old['origin']);
   $old['destination'] = trim($_POST['destination'] ?? $old['destination']);
-  $old['ride_date']   = trim($_POST['ride_date']   ?? $old['ride_date']);
-  $old['seats']       = (string) (int)($_POST['seats'] ?? $old['seats']);
-  $old['price']       = (string) (float)($_POST['price'] ?? $old['price']);
+  $old['ride_date']   = trim($_POST['ride_date']   ?? $old['ride_date']); // "YYYY-MM-DDTHH:MM"
+  $old['seats']       = (string)(int)($_POST['seats'] ?? $old['seats']);
+  $old['price']       = (string)(float)($_POST['price'] ?? $old['price']);
 
   if ($old['origin'] === '' || $old['destination'] === '' || $old['ride_date'] === '' || (int)$old['seats'] < 1 || (float)$old['price'] <= 0) {
-    $error = "Champs invalides";
+    $error = 'Champs invalides';
   } else {
     try {
-      // 👉 update() ne validera la date que si elle a changé (cf. RideModel patché)
       $ok = $rm->update(
         $rideId,
         current_user_id(),
         $old['origin'],
         $old['destination'],
-        $old['ride_date'],
+        $old['ride_date'],   // acceptera le "T" (normalizeFutureDate gère)
         (int)$old['seats'],
         (float)$old['price']
       );
       if ($ok) {
-        header("Location: /dashboard.php"); exit;
+        header('Location: /dashboard.php'); exit;
       }
       $error = "Impossible de mettre à jour ce trajet.";
     } catch (\InvalidArgumentException $e) {
-      // ex : "La date doit être aujourd’hui ou future."
       $error = $e->getMessage();
     } catch (\Throwable $e) {
       $error = "Erreur inattendue, réessaie.";
     }
   }
+}
+
+// Préremplissage pour <input type="datetime-local">
+$valDt = '';
+if (!empty($old['ride_date'])) {
+  $tz = new DateTimeZone('Europe/Paris');
+  $dt = DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $old['ride_date'], $tz)
+     ?: DateTimeImmutable::createFromFormat('Y-m-d H:i',    $old['ride_date'], $tz)
+     ?: DateTimeImmutable::createFromFormat('Y-m-d',        $old['ride_date'], $tz);
+  if ($dt) $valDt = $dt->format('Y-m-d\TH:i');
 }
 ?>
 <!doctype html>
@@ -74,7 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-<?php require_once __DIR__ . "/partials/nav.php"; ?>
+<?php require_once __DIR__ . '/partials/nav.php'; ?>
 
 <h2>Modifier le trajet</h2>
 
@@ -94,11 +100,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <input name="destination" required value="<?= htmlspecialchars($old['destination']) ?>">
   </label>
   <br>
-  <label>Date
-    <!-- bloque le passé côté navigateur ; le back valide aussi -->
-    <input type="date" name="ride_date" required
-           min="<?= date('Y-m-d') ?>"
-           value="<?= htmlspecialchars(substr($old['ride_date'],0,10)) ?>">
+  <label>Date & heure
+    <input type="datetime-local" name="ride_date"
+           min="<?= (new DateTime('now', new DateTimeZone('Europe/Paris')))->format('Y-m-d\TH:i') ?>"
+           value="<?= htmlspecialchars($valDt) ?>"
+           required>
   </label>
   <br>
   <label>Places

@@ -3,25 +3,36 @@ class RideModel {
   private PDO $pdo;
   function __construct(PDO $pdo){ $this->pdo = $pdo; }
 
-  /** 🔒 Normalise la date et refuse le passé (≥ aujourd’hui) */
-  private function normalizeFutureDate(string $raw): string {
-    $raw = trim($raw);
-    $formats = ['Y-m-d H:i:s','Y-m-d H:i','Y-m-d'];
-    $chosenFmt = null; $dt = null;
 
-    foreach ($formats as $f) {
-      $tmp = \DateTimeImmutable::createFromFormat($f, $raw);
-      if ($tmp !== false) { $chosenFmt = $f; $dt = $tmp; break; }
-    }
-    if (!$dt) throw new \InvalidArgumentException("Format de date invalide: $raw");
+ /** 🔒 Normalise la date et refuse le passé (≥ aujourd’hui, TZ Paris) */
+private function normalizeFutureDate(string $raw): string {
+  $raw = trim($raw);
+  // supporte les formats avec espace OU 'T' (input type="datetime-local")
+$formats = ['Y-m-d\TH:i:s','Y-m-d\TH:i','Y-m-d H:i:s','Y-m-d H:i','Y-m-d'];
+$tz = new DateTimeZone('Europe/Paris');
+foreach ($formats as $f) {
+  $tmp = DateTimeImmutable::createFromFormat($f, $raw, $tz);
+  if ($tmp !== false) { $chosenFmt = $f; $dt = $tmp; break; }
+}
+$today = new DateTimeImmutable('today', $tz);
+$now   = new DateTimeImmutable('now',   $tz);
+// ... (comparaisons) ...
 
-    $today = new \DateTimeImmutable('today'); // timezone du conteneur
+
+  if ($chosenFmt === 'Y-m-d') {
     if ($dt < $today) throw new \InvalidArgumentException("La date doit être aujourd’hui ou future.");
-
-    return $chosenFmt === 'Y-m-d'      ? $dt->format('Y-m-d')
-         : ($chosenFmt === 'Y-m-d H:i' ? $dt->format('Y-m-d H:i:00')
-                                       : $dt->format('Y-m-d H:i:s'));
+    return $dt->format('Y-m-d');
   }
+
+  if ($dt < $now) throw new \InvalidArgumentException("La date/heure doit être dans le futur.");
+
+  // sortie normalisée en DATETIME
+  return ($chosenFmt === 'Y-m-d\TH:i' || $chosenFmt === 'Y-m-d H:i')
+    ? $dt->format('Y-m-d H:i:00')
+    : $dt->format('Y-m-d H:i:s');
+}
+
+
 
   /** Récupère un trajet par id */
   function find($id){
@@ -31,15 +42,17 @@ class RideModel {
   }
 
   /** 🗓️ Trajets à venir pour l’utilisateur (dashboard) */
-  function listByUser($userId){
-    $st = $this->pdo->prepare(
-      "SELECT * FROM rides
-       WHERE user_id=? AND DATE(ride_date) >= CURDATE()
-       ORDER BY ride_date ASC"
-    );
-    $st->execute([$userId]);
-    return $st->fetchAll(\PDO::FETCH_ASSOC);
-  }
+function listByUser($userId){
+  $today = (new DateTime('today', new DateTimeZone('Europe/Paris')))->format('Y-m-d');
+  $st = $this->pdo->prepare(
+    "SELECT * FROM rides
+     WHERE user_id=? AND DATE(ride_date) >= ?
+     ORDER BY ride_date ASC"
+  );
+  $st->execute([$userId, $today]);
+  return $st->fetchAll(PDO::FETCH_ASSOC);
+}
+
 
   /** (optionnel) Tous les trajets (inclut passés) */
   function listByUserAll($userId){

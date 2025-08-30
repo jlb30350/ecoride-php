@@ -1,4 +1,5 @@
 <?php
+date_default_timezone_set('Europe/Paris');
 $host = getenv('DB_HOST') ?: 'localhost';
 $db   = getenv('DB_NAME') ?: 'ecoride';
 $user = getenv('DB_USER') ?: 'root';

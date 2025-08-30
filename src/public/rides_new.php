@@ -84,11 +84,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
            value="<?= htmlspecialchars($old['destination']) ?>">
   </label>
   <br>
-  <label>Date
-    <!-- bloque le passé côté front; le back bloque aussi -->
-    <input type="date" name="ride_date" min="<?= date('Y-m-d') ?>" required
-           value="<?= htmlspecialchars($old['ride_date']) ?>">
-  </label>
+  <label>Date & heure
+  <input type="datetime-local" name="ride_date"
+         min="<?= (new DateTime('now', new DateTimeZone('Europe/Paris')))->format('Y-m-d\TH:i') ?>"
+         required>
+</label>
+
   <br>
   <label>Places
     <input type="number" name="seats" min="1" placeholder="Places" required
