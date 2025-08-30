@@ -3,44 +3,111 @@ class RideModel {
   private PDO $pdo;
   function __construct(PDO $pdo){ $this->pdo = $pdo; }
 
+  /** 🔒 Normalise la date et refuse le passé (≥ aujourd’hui) */
+  private function normalizeFutureDate(string $raw): string {
+    $raw = trim($raw);
+    $formats = ['Y-m-d H:i:s','Y-m-d H:i','Y-m-d'];
+    $chosenFmt = null; $dt = null;
+
+    foreach ($formats as $f) {
+      $tmp = \DateTimeImmutable::createFromFormat($f, $raw);
+      if ($tmp !== false) { $chosenFmt = $f; $dt = $tmp; break; }
+    }
+    if (!$dt) throw new \InvalidArgumentException("Format de date invalide: $raw");
+
+    $today = new \DateTimeImmutable('today'); // timezone du conteneur
+    if ($dt < $today) throw new \InvalidArgumentException("La date doit être aujourd’hui ou future.");
+
+    return $chosenFmt === 'Y-m-d'      ? $dt->format('Y-m-d')
+         : ($chosenFmt === 'Y-m-d H:i' ? $dt->format('Y-m-d H:i:00')
+                                       : $dt->format('Y-m-d H:i:s'));
+  }
+
+  /** Récupère un trajet par id */
   function find($id){
     $st = $this->pdo->prepare("SELECT * FROM rides WHERE id=?");
     $st->execute([$id]);
-    return $st->fetch(PDO::FETCH_ASSOC);
+    return $st->fetch(\PDO::FETCH_ASSOC);
   }
 
+  /** 🗓️ Trajets à venir pour l’utilisateur (dashboard) */
   function listByUser($userId){
-    $st = $this->pdo->prepare("SELECT * FROM rides WHERE user_id=? ORDER BY ride_date DESC");
+    $st = $this->pdo->prepare(
+      "SELECT * FROM rides
+       WHERE user_id=? AND DATE(ride_date) >= CURDATE()
+       ORDER BY ride_date ASC"
+    );
     $st->execute([$userId]);
-    return $st->fetchAll(PDO::FETCH_ASSOC);
+    return $st->fetchAll(\PDO::FETCH_ASSOC);
   }
 
+  /** (optionnel) Tous les trajets (inclut passés) */
+  function listByUserAll($userId){
+    $st = $this->pdo->prepare(
+      "SELECT * FROM rides WHERE user_id=? ORDER BY ride_date DESC"
+    );
+    $st->execute([$userId]);
+    return $st->fetchAll(\PDO::FETCH_ASSOC);
+  }
+
+  /** Création — refuse date passée */
   function create($userId,$o,$d,$date,$seats,$price){
-    $st = $this->pdo->prepare("INSERT INTO rides (user_id,origin,destination,ride_date,seats,price) VALUES (?,?,?,?,?,?)");
+    $date = $this->normalizeFutureDate((string)$date);
+    $st = $this->pdo->prepare(
+      "INSERT INTO rides (user_id,origin,destination,ride_date,seats,price)
+       VALUES (?,?,?,?,?,?)"
+    );
     $st->execute([$userId,$o,$d,$date,$seats,$price]);
     return (int)$this->pdo->lastInsertId();
   }
 
-  function update($rideId,$userId,$o,$d,$date,$seats,$price){
-    $st=$this->pdo->prepare("UPDATE rides SET origin=?, destination=?, ride_date=?, seats=?, price=? WHERE id=? AND user_id=?");
-    return $st->execute([$o,$d,$date,$seats,$price,$rideId,$userId]);
+  /** Edition — refuse date passée */
+function update($rideId,$userId,$o,$d,$date,$seats,$price){
+  // récupère la ligne existante
+  $st = $this->pdo->prepare("SELECT user_id, ride_date FROM rides WHERE id=?");
+  $st->execute([$rideId]);
+  $row = $st->fetch(PDO::FETCH_ASSOC);
+  if (!$row || (int)$row['user_id'] !== (int)$userId) {
+    return false; // pas à toi ou inexistant
   }
 
+  $origDate = substr((string)$row['ride_date'], 0, 10);
+  $newDate  = substr((string)$date,        0, 10);
+
+  if ($newDate !== $origDate) {
+    // on ne valide que si la date a CHANGÉ → doit être future
+    $date = $this->normalizeFutureDate((string)$date);
+  } else {
+    // on garde exactement la valeur DB pour éviter les écarts de format
+    $date = $row['ride_date'];
+  }
+
+  $st = $this->pdo->prepare(
+    "UPDATE rides
+     SET origin=?, destination=?, ride_date=?, seats=?, price=?
+     WHERE id=? AND user_id=?"
+  );
+  return $st->execute([$o,$d,$date,$seats,$price,$rideId,$userId]);
+}
+
+
+  /** Suppression (propriétaire) */
   function deleteOwned($rideId,$userId){
-    $st=$this->pdo->prepare("DELETE FROM rides WHERE id=? AND user_id=?");
+    $st = $this->pdo->prepare("DELETE FROM rides WHERE id=? AND user_id=?");
     return $st->execute([$rideId,$userId]);
   }
 
+  /** Incrémente/décrémente les places */
   function incrementSeats($rideId,$count){
-    $st=$this->pdo->prepare("UPDATE rides SET seats=seats+? WHERE id=?");
+    $st = $this->pdo->prepare("UPDATE rides SET seats=seats+? WHERE id=?");
     return $st->execute([$count,$rideId]);
   }
 
-  // 🔎 Recherche par ville + (optionnel) jour ou semaine ISO
-  // $date peut être :
-  //   - "YYYY-Www" (ex: "2025-W36") => semaine ISO (lundi..dimanche)
-  //   - "YYYY-MM-DD" (ex: "2025-09-01") => jour précis
-  //   - sinon ignoré (ou utiliser $dateFrom/$dateTo pour une plage)
+  // 🔎 Recherche par villes + (optionnel) jour/semaine ISO
+  // $date:
+  //  - "YYYY-Www" (ex: "2025-W36") => semaine ISO (lundi..dimanche)
+  //  - "YYYY-MM-DD" => jour précis
+  //  - sinon ignoré (ou utiliser $dateFrom/$dateTo)
   function search($o, $d, $date = null, $dateFrom = null, $dateTo = null){
     $o = trim((string)$o);
     $d = trim((string)$d);
@@ -54,36 +121,29 @@ class RideModel {
             WHERE r.origin LIKE ? AND r.destination LIKE ?";
     $params = ["%{$o}%", "%{$d}%"];
 
-    // Cas 1: semaine ISO "YYYY-Www"
     if ($date !== '' && preg_match('/^(\d{4})-W(\d{2})$/', $date, $m)) {
-      $year = (int)$m[1];
-      $week = (int)$m[2];
-
-      $dt = new DateTime();
-      $dt->setISODate($year, $week);              // lundi de la semaine
+      // Semaine ISO -> lundi..dimanche
+      $dt = new \DateTime();
+      $dt->setISODate((int)$m[1], (int)$m[2]);
       $monday = $dt->format('Y-m-d');
       $sunday = (clone $dt)->modify('+6 days')->format('Y-m-d');
-
-      // Compatible DATE ou DATETIME
       $sql .= " AND DATE(r.ride_date) BETWEEN ? AND ?";
-      $params[] = $monday;
-      $params[] = $sunday;
+      $params[] = $monday; $params[] = $sunday;
 
-    // Cas 2: date précise "YYYY-MM-DD"
     } elseif ($date !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+      // Jour précis
       $sql .= " AND DATE(r.ride_date) = ?";
       $params[] = $date;
 
-    // Cas 3: plage explicite
     } elseif ($dateFrom && $dateTo) {
+      // Plage explicite
       $sql .= " AND DATE(r.ride_date) BETWEEN ? AND ?";
-      $params[] = $dateFrom;
-      $params[] = $dateTo;
+      $params[] = $dateFrom; $params[] = $dateTo;
     }
 
     $sql .= " ORDER BY r.ride_date ASC";
     $st = $this->pdo->prepare($sql);
     $st->execute($params);
-    return $st->fetchAll(PDO::FETCH_ASSOC);
+    return $st->fetchAll(\PDO::FETCH_ASSOC);
   }
 }

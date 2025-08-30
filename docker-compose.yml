@@ -15,6 +15,7 @@ services:
       - DB_NAME=${MYSQL_DATABASE}
       - DB_USER=${MYSQL_USER}
       - DB_PASS=${MYSQL_PASSWORD}
+      - TZ=Europe/Paris
     depends_on:
       - db
 
