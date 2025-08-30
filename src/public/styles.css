@@ -1,0 +1,13 @@
+body { font-family: system-ui, sans-serif; max-width: 780px; margin: 2rem auto; padding: 0 1rem; }
+header { display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; }
+nav a { margin-right:.75rem; }
+form input, form select, form button { margin:.25rem 0; padding:.5rem; }
+.err { color:#b00020; }
+.topbar {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:.75rem 1rem; border-bottom:1px solid #eee; position:sticky; top:0; background:#fff;
+}
+.brand { font-weight:700; text-decoration:none; }
+.menu a { margin-left:.75rem; text-decoration:none; }
+.menu a:hover { text-decoration:underline; }
+

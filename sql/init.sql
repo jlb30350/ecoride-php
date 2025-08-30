@@ -1,0 +1,30 @@
+CREATE TABLE IF NOT EXISTS users (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  email VARCHAR(255) UNIQUE NOT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  role ENUM('driver','passenger') NOT NULL DEFAULT 'passenger',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS rides (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  origin VARCHAR(100) NOT NULL,
+  destination VARCHAR(100) NOT NULL,
+  ride_date DATE NOT NULL,
+  seats INT NOT NULL,
+  price DECIMAL(10,2) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS reservations (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  ride_id INT NOT NULL,
+  user_id INT NOT NULL,
+  seats INT NOT NULL DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (ride_id) REFERENCES rides(id),
+  FOREIGN KEY (user_id) REFERENCES users(id),
+  UNIQUE KEY uniq_user_ride (ride_id, user_id)
+);
