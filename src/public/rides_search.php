@@ -1,73 +1,82 @@
 <?php
-require_once __DIR__."/../config/db.php";
-require_once __DIR__."/../lib/auth.php";
-require_once __DIR__."/../models/RideModel.php";
+require_once __DIR__ . '/../config/db.php';
+require_once __DIR__ . '/../lib/auth.php';
+require_once __DIR__ . '/../models/RideModel.php';
 
-$o    = trim($_GET['origin'] ?? '');
-$d    = trim($_GET['destination'] ?? '');
-$week = $_GET['ride_week'] ?? null;   // type="week"
-$date = $_GET['ride_date'] ?? null;   // si tu gardes le champ jour
+$rm = new RideModel($pdo);
 
+// --- Params (pré-remplissage du formulaire) ---
+$origin = isset($_GET['origin']) ? trim($_GET['origin']) : '';
+$dest   = isset($_GET['destination']) ? trim($_GET['destination']) : '';
+$week   = isset($_GET['week']) ? trim($_GET['week']) : ''; // format type="week" => YYYY-Www
+
+// Au moins un critère ?
+$hasQuery = ($origin !== '' || $dest !== '' || $week !== '');
+
+// Résultats par défaut
 $rides = [];
-$start = $end = null;
-
-if ($o && $d) {
-  $rm = new RideModel($pdo);
-
-  if ($week && preg_match('/^(\d{4})-W(\d{2})$/', $week, $m)) {
-    $year = (int)$m[1];
-    $weekNum = (int)$m[2];
-
-    $dto = new DateTime();
-    $dto->setISODate($year, $weekNum); // lundi
-    $start = $dto->format('Y-m-d');
-    $dto->modify('+6 day');            // dimanche
-    $end   = $dto->format('Y-m-d');
-
-    $rides = $rm->search($o, $d, null, $start, $end);
-  } elseif ($date) {
-    $rides = $rm->search($o, $d, $date);
-  } else {
-    $rides = $rm->search($o, $d);      // sans filtre date
-  }
+if ($hasQuery) {
+  // La méthode search() gère semaine ISO, date ou rien (patchée plus tôt)
+  $rides = $rm->search($origin, $dest, $week) ?? [];
 }
 ?>
 <!doctype html>
-<html>
+<html lang="fr">
 <head>
-  <meta charset="utf-8">
-  <title>Résultats</title>
-  <link rel="stylesheet" href="/styles.css">
+  <meta charset="utf-8" />
+  <title>EcoRide — Chercher</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-<?php require_once __DIR__."/partials/nav.php"; ?>
+  <?php require_once __DIR__ . '/partials/nav.php'; ?>
 
-<h2>Résultats</h2>
+  <section class="container card search">
+    <h1>Rechercher un trajet</h1>
 
-<?php if($start && $end): ?>
-  <p>Semaine du <strong><?=htmlspecialchars($start)?></strong> au <strong><?=htmlspecialchars($end)?></strong></p>
-<?php endif; ?>
+    <form action="/rides_search.php" method="get" class="search__form" style="margin-bottom: 1rem;">
+      <div class="field">
+        <label for="origin">Départ</label>
+        <input id="origin" name="origin" type="text" placeholder="Ex : Paris"
+               value="<?= htmlspecialchars($origin) ?>">
+      </div>
 
-<?php if(!$rides): ?>
-  <p>Aucun trajet trouvé.</p>
-<?php endif; ?>
+      <div class="field">
+        <label for="destination">Arrivée</label>
+        <input id="destination" name="destination" type="text" placeholder="Ex : Lyon"
+               value="<?= htmlspecialchars($dest) ?>">
+      </div>
 
-<ul>
-<?php foreach($rides as $r): ?>
-  <li>
-    <strong><?=htmlspecialchars($r['origin'])?> → <?=htmlspecialchars($r['destination'])?></strong>
-    le <?=htmlspecialchars($r['ride_date'])?> — places: <?=$r['seats']?> — prix: <?=$r['price']?>€
-    <?php if($r['seats'] > 0): ?>
-      <form method="post" action="/reserve.php" style="display:inline">
-        <input type="hidden" name="ride_id" value="<?=$r['id']?>">
-        <button>Réserver</button>
-      </form>
+      <div class="field">
+        <label for="week">Semaine</label>
+        <input id="week" name="week" type="week" value="<?= htmlspecialchars($week) ?>">
+      </div>
+
+      <button class="btn btn--primary" type="submit">Rechercher</button>
+    </form>
+  </section>
+
+  <section class="container">
+    <h2>Résultats</h2>
+
+    <?php if (!$hasQuery): ?>
+      <p>Saisis au moins un critère puis lance la recherche.</p>
+
+    <?php elseif (empty($rides)): ?>
+      <p>Aucun trajet trouvé.</p>
+
     <?php else: ?>
-      <em>Complet</em>
+      <ul>
+        <?php foreach ($rides as $r): ?>
+          <li>
+            <?= htmlspecialchars($r['origin']) ?> → <?= htmlspecialchars($r['destination']) ?>
+            le <?= htmlspecialchars($r['ride_date'] ?? $r['date'] ?? '') ?>
+            — places <?= (int)($r['seats'] ?? 0) ?>
+            — <?= htmlspecialchars($r['price'] ?? '') ?> €
+          </li>
+        <?php endforeach; ?>
+      </ul>
     <?php endif; ?>
-  </li>
-<?php endforeach; ?>
-</ul>
+  </section>
 </body>
 </html>
-

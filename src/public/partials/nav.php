@@ -1,12 +1,12 @@
 <?php // src/public/partials/nav.php
-require_once __DIR__."/../../lib/auth.php"; // pour current_user_id()
+require_once __DIR__ . "/../../lib/auth.php"; // pour current_user_id()
 
 ?>
 <header class="topbar">
   <a class="brand" href="/">EcoRide</a>
   <nav class="menu">
     <a href="/">Accueil</a>
-    <a href="/rides_search.php?origin=&destination=">Chercher</a>
+   <a href="/rides_search.php">Chercher</a>
     <?php if (current_user_id()): ?>
       <a href="/dashboard.php">Dashboard</a>
       <a href="/rides_new.php">Publier un trajet</a>
@@ -17,4 +17,3 @@ require_once __DIR__."/../../lib/auth.php"; // pour current_user_id()
     <?php endif; ?>
   </nav>
 </header>
-
