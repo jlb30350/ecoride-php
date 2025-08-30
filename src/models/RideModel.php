@@ -3,36 +3,37 @@ class RideModel {
   private PDO $pdo;
   function __construct(PDO $pdo){ $this->pdo = $pdo; }
 
+  /** 🔒 Normalise SANS décaler l’heure (Europe/Paris) + refuse le passé */
+  private function normalizeFutureDate(string $raw): string {
+    $raw = trim($raw);
+    $tz  = new \DateTimeZone('Europe/Paris');
+    $now = new \DateTimeImmutable('now', $tz);
+    $today = new \DateTimeImmutable('today', $tz);
 
- /** 🔒 Normalise la date et refuse le passé (≥ aujourd’hui, TZ Paris) */
-private function normalizeFutureDate(string $raw): string {
-  $raw = trim($raw);
-  // supporte les formats avec espace OU 'T' (input type="datetime-local")
-$formats = ['Y-m-d\TH:i:s','Y-m-d\TH:i','Y-m-d H:i:s','Y-m-d H:i','Y-m-d'];
-$tz = new DateTimeZone('Europe/Paris');
-foreach ($formats as $f) {
-  $tmp = DateTimeImmutable::createFromFormat($f, $raw, $tz);
-  if ($tmp !== false) { $chosenFmt = $f; $dt = $tmp; break; }
-}
-$today = new DateTimeImmutable('today', $tz);
-$now   = new DateTimeImmutable('now',   $tz);
-// ... (comparaisons) ...
+    // 1) datetime-local: "YYYY-MM-DDTHH:MM[:SS]" ou "YYYY-MM-DD HH:MM[:SS]"
+    if (preg_match('/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/', $raw, $m)) {
+      $yyyy=$m[1]; $mm=$m[2]; $dd=$m[3]; $HH=$m[4]; $ii=$m[5]; $ss=$m[6] ?? '00';
 
+      // vérif futur (en Paris) mais on renvoie la chaîne telle quelle (normalisée)
+      $dt = \DateTimeImmutable::createFromFormat('Y-m-d H:i:s', "$yyyy-$mm-$dd $HH:$ii:$ss", $tz);
+      if ($dt === false) throw new \InvalidArgumentException("Format de date invalide: $raw");
+      if ($dt < $now)    throw new \InvalidArgumentException("La date/heure doit être dans le futur.");
 
-  if ($chosenFmt === 'Y-m-d') {
-    if ($dt < $today) throw new \InvalidArgumentException("La date doit être aujourd’hui ou future.");
-    return $dt->format('Y-m-d');
+      return "$yyyy-$mm-$dd $HH:$ii:$ss"; // 👉 pas de conversion, donc pas de +1h
+    }
+
+    // 2) date seule: "YYYY-MM-DD"
+    if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $raw, $m)) {
+      $yyyy=$m[1]; $mm=$m[2]; $dd=$m[3];
+      $dt = \DateTimeImmutable::createFromFormat('Y-m-d', "$yyyy-$mm-$dd", $tz);
+      if ($dt === false) throw new \InvalidArgumentException("Format de date invalide: $raw");
+      if ($dt < $today)  throw new \InvalidArgumentException("La date doit être aujourd’hui ou future.");
+
+      return "$yyyy-$mm-$dd 00:00:00";
+    }
+
+    throw new \InvalidArgumentException("Format de date invalide: $raw");
   }
-
-  if ($dt < $now) throw new \InvalidArgumentException("La date/heure doit être dans le futur.");
-
-  // sortie normalisée en DATETIME
-  return ($chosenFmt === 'Y-m-d\TH:i' || $chosenFmt === 'Y-m-d H:i')
-    ? $dt->format('Y-m-d H:i:00')
-    : $dt->format('Y-m-d H:i:s');
-}
-
-
 
   /** Récupère un trajet par id */
   function find($id){
@@ -42,17 +43,16 @@ $now   = new DateTimeImmutable('now',   $tz);
   }
 
   /** 🗓️ Trajets à venir pour l’utilisateur (dashboard) */
-function listByUser($userId){
-  $today = (new DateTime('today', new DateTimeZone('Europe/Paris')))->format('Y-m-d');
-  $st = $this->pdo->prepare(
-    "SELECT * FROM rides
-     WHERE user_id=? AND DATE(ride_date) >= ?
-     ORDER BY ride_date ASC"
-  );
-  $st->execute([$userId, $today]);
-  return $st->fetchAll(PDO::FETCH_ASSOC);
-}
-
+  function listByUser($userId){
+    $today = (new \DateTime('today', new \DateTimeZone('Europe/Paris')))->format('Y-m-d');
+    $st = $this->pdo->prepare(
+      "SELECT * FROM rides
+       WHERE user_id=? AND DATE(ride_date) >= ?
+       ORDER BY ride_date ASC"
+    );
+    $st->execute([$userId, $today]);
+    return $st->fetchAll(\PDO::FETCH_ASSOC);
+  }
 
   /** (optionnel) Tous les trajets (inclut passés) */
   function listByUserAll($userId){
@@ -74,40 +74,37 @@ function listByUser($userId){
     return (int)$this->pdo->lastInsertId();
   }
 
-  /** Edition — refuse date passée */
-function update($rideId,$userId,$o,$d,$date,$seats,$price){
-  // récupère la ligne existante
-  $st = $this->pdo->prepare("SELECT user_id, ride_date FROM rides WHERE id=?");
-  $st->execute([$rideId]);
-  $row = $st->fetch(PDO::FETCH_ASSOC);
-  if (!$row || (int)$row['user_id'] !== (int)$userId) {
-    return false; // pas à toi ou inexistant
+  /** Edition — prend en compte le changement d’heure (pas que le jour) */
+  function update($rideId,$userId,$o,$d,$date,$seats,$price){
+    $st = $this->pdo->prepare("SELECT user_id, ride_date FROM rides WHERE id=?");
+    $st->execute([$rideId]);
+    $row = $st->fetch(\PDO::FETCH_ASSOC);
+    if (!$row || (int)$row['user_id'] !== (int)$userId) {
+      return false;
+    }
+
+    // Canonique actuel et demandé à la minute
+    $current = substr((string)$row['ride_date'], 0, 16);               // "YYYY-mm-dd HH:ii"
+    $posted  = preg_replace('/T/', ' ', substr((string)$date, 0, 16)); // "YYYY-mm-dd HH:ii"
+
+    if ($posted === $current) {
+      $newDate = $row['ride_date']; // rien n’a changé
+    } else {
+      $newDate = $this->normalizeFutureDate((string)$date); // valide + renvoie exact
+    }
+
+    $st = $this->pdo->prepare(
+      "UPDATE rides
+       SET origin=?, destination=?, ride_date=?, seats=?, price=?
+       WHERE id=? AND user_id=?"
+    );
+    return $st->execute([$o,$d,$newDate,$seats,$price,$rideId,$userId]);
   }
-
-  $origDate = substr((string)$row['ride_date'], 0, 10);
-  $newDate  = substr((string)$date,        0, 10);
-
-  if ($newDate !== $origDate) {
-    // on ne valide que si la date a CHANGÉ → doit être future
-    $date = $this->normalizeFutureDate((string)$date);
-  } else {
-    // on garde exactement la valeur DB pour éviter les écarts de format
-    $date = $row['ride_date'];
-  }
-
-  $st = $this->pdo->prepare(
-    "UPDATE rides
-     SET origin=?, destination=?, ride_date=?, seats=?, price=?
-     WHERE id=? AND user_id=?"
-  );
-  return $st->execute([$o,$d,$date,$seats,$price,$rideId,$userId]);
-}
-
 
   /** Suppression (propriétaire) */
   function deleteOwned($rideId,$userId){
     $st = $this->pdo->prepare("DELETE FROM rides WHERE id=? AND user_id=?");
-    return $st->execute([$rideId,$userId]);
+    return $st->execute([$rideId,$UserId]);
   }
 
   /** Incrémente/décrémente les places */
@@ -116,11 +113,7 @@ function update($rideId,$userId,$o,$d,$date,$seats,$price){
     return $st->execute([$count,$rideId]);
   }
 
-  // 🔎 Recherche par villes + (optionnel) jour/semaine ISO
-  // $date:
-  //  - "YYYY-Www" (ex: "2025-W36") => semaine ISO (lundi..dimanche)
-  //  - "YYYY-MM-DD" => jour précis
-  //  - sinon ignoré (ou utiliser $dateFrom/$dateTo)
+  /** 🔎 Recherche (jour ou semaine ISO optionnels) */
   function search($o, $d, $date = null, $dateFrom = null, $dateTo = null){
     $o = trim((string)$o);
     $d = trim((string)$d);
@@ -135,8 +128,8 @@ function update($rideId,$userId,$o,$d,$date,$seats,$price){
     $params = ["%{$o}%", "%{$d}%"];
 
     if ($date !== '' && preg_match('/^(\d{4})-W(\d{2})$/', $date, $m)) {
-      // Semaine ISO -> lundi..dimanche
-      $dt = new \DateTime();
+      // semaine ISO -> lundi..dimanche (TZ Paris pour cohérence)
+      $dt = new \DateTime('now', new \DateTimeZone('Europe/Paris'));
       $dt->setISODate((int)$m[1], (int)$m[2]);
       $monday = $dt->format('Y-m-d');
       $sunday = (clone $dt)->modify('+6 days')->format('Y-m-d');
@@ -144,12 +137,10 @@ function update($rideId,$userId,$o,$d,$date,$seats,$price){
       $params[] = $monday; $params[] = $sunday;
 
     } elseif ($date !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
-      // Jour précis
       $sql .= " AND DATE(r.ride_date) = ?";
       $params[] = $date;
 
     } elseif ($dateFrom && $dateTo) {
-      // Plage explicite
       $sql .= " AND DATE(r.ride_date) BETWEEN ? AND ?";
       $params[] = $dateFrom; $params[] = $dateTo;
     }
