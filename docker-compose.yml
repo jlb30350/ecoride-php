@@ -32,6 +32,21 @@ services:
       - db_data:/var/lib/mysql
       - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
 
+      phpmyadmin:
+  image: phpmyadmin:latest
+  container_name: ecoride_phpmyadmin
+  ports:
+    - "127.0.0.1:8081:80"   # http://localhost:8081
+  environment:
+    - PMA_HOST=db
+    - PMA_USER=${MYSQL_USER}
+    - PMA_PASSWORD=${MYSQL_PASSWORD}
+    - TZ=Europe/Paris
+  depends_on:
+    - db
+  restart: unless-stopped
+
+
 volumes:
   db_data:
 
