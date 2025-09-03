@@ -1,10 +1,9 @@
-version: "3.9"
 services:
   web:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: ecoride_web
+    # container_name: ecoride_web   # <- évite container_name pour limiter les conflits
     ports:
       - "8080:80"
     volumes:
@@ -17,36 +16,50 @@ services:
       - DB_PASS=${MYSQL_PASSWORD}
       - TZ=Europe/Paris
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    networks: [backend]
 
   db:
     image: mysql:8.0
-    container_name: ecoride_db
+    # container_name: ecoride_db
     environment:
       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
       - MYSQL_DATABASE=${MYSQL_DATABASE}
       - MYSQL_USER=${MYSQL_USER}
       - MYSQL_PASSWORD=${MYSQL_PASSWORD}
       - TZ=Europe/Paris
+    command: --default-authentication-plugin=mysql_native_password
     volumes:
       - db_data:/var/lib/mysql
       - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks: [backend]
 
-      phpmyadmin:
-  image: phpmyadmin:latest
-  container_name: ecoride_phpmyadmin
-  ports:
-    - "127.0.0.1:8081:80"   # http://localhost:8081
-  environment:
-    - PMA_HOST=db
-    - PMA_USER=${MYSQL_USER}
-    - PMA_PASSWORD=${MYSQL_PASSWORD}
-    - TZ=Europe/Paris
-  depends_on:
-    - db
-  restart: unless-stopped
-
+  phpmyadmin:
+    image: phpmyadmin:latest
+    # container_name: ecoride_phpmyadmin
+    ports:
+      - "127.0.0.1:8081:80"
+    environment:
+      - PMA_HOST=db
+      - PMA_PORT=3306
+      - PMA_USER=${MYSQL_USER}
+      - PMA_PASSWORD=${MYSQL_PASSWORD}
+      - PMA_ARBITRARY=0
+      - TZ=Europe/Paris
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [backend]
 
 volumes:
   db_data:
 
+networks:
+  backend:
