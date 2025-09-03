@@ -104,7 +104,7 @@ class RideModel {
   /** Suppression (propriétaire) */
   function deleteOwned($rideId,$userId){
     $st = $this->pdo->prepare("DELETE FROM rides WHERE id=? AND user_id=?");
-    return $st->execute([$rideId,$UserId]);
+    return $st->execute([$rideId,$userId]);
   }
 
   /** Incrémente/décrémente les places */

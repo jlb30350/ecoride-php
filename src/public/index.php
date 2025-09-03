@@ -19,7 +19,6 @@ require_once __DIR__ . "/../lib/auth.php";
       <p class="subtitle">Cherche un trajet, réserve, roule.</p>
       <a href="/rides_search.php" class="btn btn--primary">Chercher un trajet</a>
     </div>
-    <div class="hero__illu">🚗🌱</div>
   </header>
 </body>
 </html>
